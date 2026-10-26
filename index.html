@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0f172a"><link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png">
+<title>BlindAssist</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0}
+header{padding:10px 14px;display:flex;justify-content:space-between;background:#1e293b}h1{font-size:17px;margin:0}
+input[type=text],input[type=password],select{width:100%;padding:12px;border-radius:8px;border:0;font-size:16px}
+button{padding:12px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-size:16px}
+#lg{position:fixed;inset:0;background:#0f172a;z-index:999;display:flex;flex-direction:column;gap:12px;justify-content:center;padding:24px}
+#places{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px}#places button{height:90px;font-size:24px;background:#0f766e}
+#mic{width:calc(100% - 20px);margin:0 10px;height:70px;font-size:24px;background:#7c3aed}
+#map{height:40vh;margin-top:10px}
+#last{margin:8px;padding:10px;border-radius:10px;background:#134e4a}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 8px}.c{background:#1e293b;border-radius:10px;padding:10px}.c b{display:block;font-size:19px}.c span{font-size:12px;color:#94a3b8}
+.w{background:#7f1d1d!important}h2{font-size:15px;margin:12px 8px 4px}.t{background:#1e293b;border-radius:10px;padding:8px;margin:0 8px 6px;font-size:13px}
+details{margin:8px;background:#1e293b;border-radius:10px;padding:10px}details>*{margin-top:8px}
+</style></head><body>
+<div id="lg"><h1>👟 BlindAssist</h1>
+<input id="em" type="text" value="smartshoes840@gmail.com"><input id="pw" type="password" placeholder="Firebase password">
+<label><input type="checkbox" id="mon"> Monitor mode (sirf dekhna, awaaz band)</label>
+<button onclick="doLogin()">Login</button><div id="err" style="color:#f87171"></div></div>
+<header><h1>👟 BlindAssist <span id="md"></span></h1><span id="st">...</span></header>
+<div id="walker"><div id="places"></div><button id="mic" onclick="listen()">🎤 Bolo: kahan jana hai?</button></div>
+<div id="last">Tayyar</div>
+<div style="padding:0 10px;display:flex;gap:8px"><button class="r" style="background:#dc2626;flex:1" onclick="stopNav()">⏹ Rukko</button></div>
+<div id="map"></div>
+<div class="grid"><div class="c"><span>GPS</span><b id="gps">--</b></div><div class="c"><span>Manzil tak (m)</span><b id="rem">--</b></div>
+<div class="c" id="cObs"><span>Rukawat (cm)</span><b id="obs">--</b></div><div class="c" id="cWet"><span>Paani</span><b id="wet">--</b></div>
+<div class="c" id="cMot"><span>Jhatka</span><b id="mot">--</b></div><div class="c"><span>Manzil</span><b id="dn">--</b></div></div>
+<details><summary>⚙️ Jagah ki location save karo</summary>
+<select id="sel"></select><button onclick="saveHere()">📍 Shoe abhi jahan hai wahan save karo</button>
+<input id="addr" type="text" placeholder="ya address likho"><button onclick="saveAddr()">Address se save karo</button></details>
+<h2>Saved trips</h2><div id="hist"></div><br>
+<script>
+const KEY='AIzaSyACJSlrWkS52TrFRRYQC1oZg5KPsOe-n0U',DB='https://blindassist-46a9b-default-rtdb.firebaseio.com',DEV='/devices/smartShoes01';
+const $=i=>document.getElementById(i);
+const PL=[{id:'ghar',n:'🏠 Ghar',a:['ghar','home','घर','گھر']},{id:'masjid',n:'🕌 Masjid',a:['masjid','mosque','मस्जिद','مسجد']},{id:'dukaan',n:'🛒 Dukaan',a:['dukaan','dukan','shop','दुकान','دکان']},{id:'market',n:'🏬 Market',a:['market','bazaar','bazar','मार्केट','बाजार','مارکیٹ']}];
+let tok='',tokT=0,cred=null,monitor=false,places={},lastJson='',lastChange=Date.now(),navKey='';
+const fb=async(p,m,b)=>(await fetch(DB+DEV+p+'.json?auth='+tok,{method:m||'GET',body:b?JSON.stringify(b):undefined})).json();
+async function login(e,p){const j=await(await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p,returnSecureToken:true})})).json();if(!j.idToken)throw new Error(j.error&&j.error.message||'fail');tok=j.idToken;tokT=Date.now();cred={e,p}}
+async function doLogin(){try{await login($('em').value,$('pw').value);monitor=$('mon').checked;localStorage.cred=JSON.stringify({e:cred.e,p:cred.p,m:monitor});$('lg').style.display='none';boot()}catch(x){$('err').textContent='Login nahi hua: '+x.message}}
+if(localStorage.cred){const c=JSON.parse(localStorage.cred);$('em').value=c.e;$('pw').value=c.p;$('mon').checked=c.m;doLogin()}
+const map=L.map('map').setView([24.86,67],14);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+const mk=L.circleMarker([0,0],{radius:8,color:'#fff',fillColor:'#2563eb',fillOpacity:1}).addTo(map);
+let me=null,dest=null,dname='',line=null,dm=null,steps=[],si=1,nav=false,trip=null,path=[],lastObs=0,lastMot=0,lastWet=false,warned=false,first=true,wl=null;
+const hav=(a,b)=>{const R=6371e3,r=x=>x*Math.PI/180,dl=r(b[0]-a[0]),dg=r(b[1]-a[1]),h=Math.sin(dl/2)**2+Math.cos(r(a[0]))*Math.cos(r(b[0]))*Math.sin(dg/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
+function say(t,cb){$('last').textContent='🔊 '+t;if(monitor||!window.speechSynthesis){cb&&cb();return}speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='hi-IN';if(cb)u.onend=cb;speechSynthesis.speak(u)}
+const MOD={left:'left mur jao','slight left':'halka left lo','sharp left':'tez left lo',right:'right mur jao','slight right':'halka right lo','sharp right':'tez right lo',straight:'seedha chalo',uturn:'wapas mur jao'};
+const txt=s=>s.maneuver.type==='arrive'?'aap manzil par pohanch gaye hain':(MOD[s.maneuver.modifier]||'seedha chalo')+(s.name?', '+s.name:'');
+const ll=s=>[s.maneuver.location[1],s.maneuver.location[0]];
+async function boot(){$('md').textContent=monitor?'👁 Monitor':'';$('walker').style.display=monitor?'none':'block';
+ $('sel').innerHTML=PL.map(p=>`<option value="${p.id}">${p.n}</option>`).join('');
+ $('places').innerHTML=PL.map(p=>`<button onclick="goTo('${p.id}')">${p.n}</button>`).join('');
+ try{places=JSON.parse(localStorage.places||'{}')}catch(e){}try{const r=await fb('/places');if(r)places={...places,...r}}catch(e){}
+ hist();poll();setInterval(poll,1000)}
+async function poll(){try{if(Date.now()-tokT>45*60000)await login(cred.e,cred.p);
+ const d=await fb('/telemetry');if(!d)throw 0;const js=JSON.stringify(d);if(js!==lastJson){lastJson=js;lastChange=Date.now()}
+ const old=Date.now()-lastChange>10000;$('st').textContent=old?'Data purana':'Shoe live';$('st').style.color=old?'#fbbf24':'#4ade80';onData(d);
+ if(monitor)syncNav()}catch(e){$('st').textContent='Firebase error';$('st').style.color='#f87171'}}
+async function syncNav(){try{const n=await fb('/nav');if(!n||!n.active){$('dn').textContent='--';if(line){map.removeLayer(line);line=null}navKey='';return}
+ $('dn').textContent=n.dest;$('last').textContent='🚶 Chalne wala '+n.dest+' ki taraf ja raha hai';
+ if(navKey!==n.t0){navKey=n.t0;if(line)map.removeLayer(line);line=L.geoJSON(n.geom,{style:{color:'#22c55e',weight:5}}).addTo(map)}}catch(e){}}
+function onData(d){$('gps').textContent=d.gpsFix?'Fix ('+d.satellites+')':'Dhoond raha...';
+ $('obs').textContent=d.distanceCm!=null?d.distanceCm.toFixed(0):'clear';$('wet').textContent=d.water?'GEELA ⚠️':'Sukha';$('mot').textContent=d.motionEvent?'JHATKA ⚠️':'Theek';
+ $('cObs').classList.toggle('w',!!d.obstacle);$('cWet').classList.toggle('w',!!d.water);$('cMot').classList.toggle('w',!!d.motionEvent);
+ const now=Date.now();
+ if(d.obstacle&&now-lastObs>4000){lastObs=now;say('Samne rukawat hai, '+Math.round(d.distanceCm)+' centimeter door')}
+ if(d.water&&!lastWet)say('Aage paani hai, ehtiyat karo');lastWet=!!d.water;
+ if(d.motionEvent&&now-lastMot>10000){lastMot=now;say('Zor ka jhatka laga, kya aap theek hain?')}
+ if(!d.gpsFix)return;const p=[d.latitude,d.longitude];if(nav&&me)path.push(hav(me,p));me=p;mk.setLatLng(p);
+ if(first){map.setView(p,17);first=false}else if(nav||monitor)map.panTo(p);if(nav)track()}
+function goTo(id){const p=places[id],n=PL.find(x=>x.id===id).n;
+ if(!p)return say(n.replace(/^\S+ /,'')+' ki location save nahi hai. Neeche settings mein save karo');
+ if(!me)return say('GPS fix ka intezar karo, khuli jagah jao');route(p.lat,p.lon,n.replace(/^\S+ /,''))}
+async function route(la,lo,name){say('Raasta dhoond raha hoon');try{
+ const j=await(await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/foot/${me[1]},${me[0]};${lo},${la}?overview=full&geometries=geojson&steps=true`)).json();const rt=j.routes[0];
+ dest=[la,lo];dname=name;if(line)map.removeLayer(line);if(dm)map.removeLayer(dm);
+ line=L.geoJSON(rt.geometry,{style:{color:'#22c55e',weight:5}}).addTo(map);dm=L.marker(dest).addTo(map);map.fitBounds(line.getBounds());
+ steps=rt.legs[0].steps;si=1;warned=false;path=[];nav=true;$('dn').textContent=name;
+ try{wl=await navigator.wakeLock.request('screen')}catch(e){}
+ trip={name,t0:Date.now(),from:me,to:dest};fb('/nav','PUT',{active:true,dest:name,geom:rt.geometry,t0:trip.t0}).catch(()=>{});
+ say(name+' ka raasta shuru. Kul '+Math.round(rt.distance)+' meter, takreeban '+Math.round(rt.duration/60)+' minute. '+Math.round(hav(me,ll(steps[si])))+' meter baad '+txt(steps[si]))
+ }catch(e){say('Raasta nahi ban saka, internet check karo')}}
+function track(){const m=steps[si];if(!m)return;const d=hav(me,ll(m));$('rem').textContent=Math.round(hav(me,dest));
+ if(m.maneuver.type==='arrive'&&d<20)return finish();
+ if(d<35&&!warned){warned=true;say('Ab '+txt(m))}
+ if(d<15&&si<steps.length-1){si++;warned=false;const n=steps[si];say(Math.round(hav(me,ll(n)))+' meter baad '+txt(n))}}
+function endNav(){nav=false;fb('/nav','PUT',{active:false}).catch(()=>{});try{wl&&wl.release()}catch(e){}}
+function finish(){endNav();say('Aap '+dname+' pohanch gaye hain. Trip save ho gayi');
+ const t={name:dname,date:new Date(trip.t0).toLocaleString(),min:Math.round((Date.now()-trip.t0)/60000),m:Math.round(path.reduce((a,b)=>a+b,0))};
+ const L2=JSON.parse(localStorage.trips||'[]');L2.unshift(t);localStorage.trips=JSON.stringify(L2);hist();fb('/trips','POST',t).catch(()=>{})}
+function stopNav(){if(nav){endNav();say('Navigation band')}else speechSynthesis.cancel()}
+function hist(){const L2=JSON.parse(localStorage.trips||'[]');$('hist').innerHTML=L2.length?L2.map(t=>`<div class="t"><b>${t.name}</b> · ${t.date} · ${t.m} m · ${t.min} min</div>`).join(''):'<div class="t">Abhi koi trip nahi</div>'}
+function listen(){const R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R)return say('Is browser mein voice recognition nahi hai, Chrome use karo');
+ const r=new R();r.lang='hi-IN';r.onresult=e=>{const t=e.results[0][0].transcript.toLowerCase();$('last').textContent='🎤 '+t;const p=PL.find(p=>p.a.some(x=>t.includes(x)));p?goTo(p.id):say('Samajh nahi aaya. Ghar, Masjid, Dukaan ya Market bolo')};
+ r.onerror=()=>say('Awaz sunai nahi di, dobara mic dabao');say('Kahan jana hai? Ghar, Masjid, Dukaan ya Market bolo',()=>r.start())}
+function savePlace(la,lo){places[$('sel').value]={lat:la,lon:lo};localStorage.places=JSON.stringify(places);fb('/places','PUT',places).catch(()=>{});say('Location save ho gayi')}
+function saveHere(){me?savePlace(me[0],me[1]):alert('Pehle GPS fix chahiye')}
+async function saveAddr(){const r=await(await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent($('addr').value))).json();r.length?savePlace(+r[0].lat,+r[0].lon):alert('Address nahi mila')}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script></body></html>
